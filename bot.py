@@ -1,14 +1,14 @@
-from discord.ext import commands
-import discord
-import requests
+import base64
+import binascii
 import datetime
 import os
-from inspect import getmembers, isfunction
+import random
 import string
 import sys
-import binascii
-import base64
-import random
+
+import discord
+import requests
+from discord.ext import commands
 
 DISCORD_API_KEY = os.environ.get("DISCORD_API_KEY")
 
@@ -20,17 +20,21 @@ headers = {"User-Agent": "Mozilla/5.0"}
 
 bot = commands.Bot(command_prefix="/", strip_after_prefix=True)
 
+
 def get_upcoming_ctfs(limit=2):
     res = requests.get(events_url, params={"limit": limit}, headers=headers)
     return res.json()
+
 
 def get_random_quote():
     res = requests.get(quote_url)
     return res.json()
 
+
 def get_random_joke():
     res = requests.get(joke_url, params={"nsfw": False})
     return res.json()
+
 
 def unhex(*hex_str):
     hex_str = "".join(hex_str)
@@ -40,15 +44,21 @@ def unhex(*hex_str):
     encoded_string = bytes.fromhex(hex_str)
     return encoded_string.decode()
 
+
 class Caesar:
     caesar_charset = string.ascii_lowercase
+
     @staticmethod
     def encrypt(msg: str, key: int):
         out = ""
         for char in msg:
             try:
                 shift = (Caesar.caesar_charset.index(char.lower()) + key) % 26
-                out += Caesar.caesar_charset[shift] if char.islower() else Caesar.caesar_charset[shift].upper()
+                out += (
+                    Caesar.caesar_charset[shift]
+                    if char.islower()
+                    else Caesar.caesar_charset[shift].upper()
+                )
             except ValueError:
                 out += char
         return out
@@ -57,13 +67,16 @@ class Caesar:
     def decrypt(msg: str, key: int):
         return Caesar.encrypt(msg, -key)
 
+
 class Rot13:
     @staticmethod
     def encrypt(msg):
         return Caesar.encrypt(msg, 13)
 
+
 class Rot47:
-    rot47_charset = '!"#$%&\'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\]^_`abcdefghijklmnopqrstuvwxyz{|}~'
+    rot47_charset = "!\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\]^_`abcdefghijklmnopqrstuvwxyz{|}~"
+
     @staticmethod
     def encrypt(msg: str):
         out = ""
@@ -100,18 +113,18 @@ async def cmd_upcoming_ctfs(ctx, num=2):
             format_ = ctf.get("format")
             start = ctf.get("start")
             finish = ctf.get("finish")
-        
+
             embed = discord.Embed(
                 title=title, description=str(url), color=discord.Colour.green()
             )
             embed.add_field(name="Format", value=str(format_))
             if start and finish:
                 start = start[:-3] + start[-2:]
-                start = datetime.datetime.strptime(start,"%Y-%m-%dT%H:%M:%S%z")
+                start = datetime.datetime.strptime(start, "%Y-%m-%dT%H:%M:%S%z")
                 start = start.strftime("%Y-%m-%d %H:%M %Z")
 
                 finish = finish[:-3] + finish[-2:]
-                finish = datetime.datetime.strptime(finish,"%Y-%m-%dT%H:%M:%S%z")
+                finish = datetime.datetime.strptime(finish, "%Y-%m-%dT%H:%M:%S%z")
                 finish = finish.strftime("%Y-%m-%d %H:%M %Z")
 
                 embed.add_field(name="Timeframe", value=f"{start}->{finish}")
@@ -130,6 +143,7 @@ async def cmd_quote(ctx):
         title=content, description=f"**{author}**", color=discord.Colour.green()
     )
     await ctx.reply(embed=embed, delete_after=300)
+
 
 @bot.command("joke")
 async def cmd_joke(ctx):
@@ -156,6 +170,7 @@ async def cmd_unhex(ctx, *hex_str):
     except:
         await ctx.reply("Sorry something went wrong :(", delete_after=300)
 
+
 @bot.command("rot")
 async def cmd_rot(ctx, *text):
     """
@@ -172,6 +187,7 @@ async def cmd_rot(ctx, *text):
     except:
         await ctx.reply("Sorry something went wrong :(", delete_after=300)
 
+
 @bot.command("rot13")
 async def cmd_rot13(ctx, *text):
     """
@@ -183,6 +199,7 @@ async def cmd_rot13(ctx, *text):
         await ctx.reply(f"```{rot13}```", delete_after=300)
     except:
         await ctx.reply("Sorry something went wrong :(", delete_after=300)
+
 
 @bot.command("rot47")
 async def cmd_rot47(ctx, *text):
@@ -196,6 +213,7 @@ async def cmd_rot47(ctx, *text):
     except:
         await ctx.reply("Sorry something went wrong :(", delete_after=300)
 
+
 @bot.command("hex")
 async def cmd_hex(ctx, *text):
     """
@@ -207,6 +225,7 @@ async def cmd_hex(ctx, *text):
         await ctx.reply(hex_string, delete_after=300)
     except:
         await ctx.reply("Sorry something went wrong :(", delete_after=300)
+
 
 @bot.command("base64", aliases=["b64"])
 async def cmd_base64(ctx, method, *msg):
@@ -230,6 +249,7 @@ async def cmd_base64(ctx, method, *msg):
             await ctx.reply("Sorry something went wrong :(", delete_after=300)
     else:
         await ctx.reply(f"{method} is not a valid option", delete_after=300)
+
 
 @bot.command("base32", aliases=["b32"])
 async def cmd_base32(ctx, method, *msg):
@@ -262,6 +282,34 @@ async def cmd_cointoss(ctx):
     """
     coin_faces = ["heads", "tails"]
     await ctx.reply(random.choice(coin_faces), delete_after=300)
+
+
+@bot.command("poll")
+async def cmd_poll(ctx, title, *options):
+    """
+    Create a poll. (maximum 9 options)
+    Usage: /poll "question" "1st option" "2nd option"...
+    """
+    if len(options) > 9:
+        await ctx.reply("Sorry maximum 9 options are allowed in poll", delete_after=300)
+    else:
+        emojis = ["1⃣", "2⃣", "3⃣", "4⃣", "5⃣", "6⃣", "7⃣", "8⃣", "9⃣"]
+        reactions = []
+        description = ""
+
+        for i, option in enumerate(options):
+            description += f"{emojis[i]} - {option}\n"
+            reactions.append(emojis[i])
+
+        embed = discord.Embed(
+            title=title, description=description, color=discord.Colour.blue()
+        )
+        msg = await ctx.send(embed=embed)
+        for reaction in reactions:
+            try:
+                await msg.add_reaction(reaction)
+            except:
+                pass
 
 
 bot.run(DISCORD_API_KEY)
