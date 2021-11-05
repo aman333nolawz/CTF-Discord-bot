@@ -4,12 +4,12 @@ import datetime
 import os
 import random
 import string
-from urllib.parse import quote, unquote, urlparse, parse_qs
+from urllib.parse import parse_qs, quote, unquote, urlparse
 
 import discord
 import requests
 from discord.ext import commands
-from pytube import YouTube, Search, Playlist
+from pytube import Playlist, Search, YouTube
 from pytube.exceptions import LiveStreamError
 
 DISCORD_API_KEY = os.environ.get("DISCORD_API_KEY")
@@ -171,10 +171,6 @@ async def on_raw_reaction_add(payload):
     if payload.user_id != bot.user.id and payload.emoji.name not in poll_emojis:
         await reaction.remove(payload.member)
 
-
-@bot.event
-async def on_message(ctx):
-    print(ctx)
 
 class CTF(commands.Cog):
     def __init__(self, bot):
