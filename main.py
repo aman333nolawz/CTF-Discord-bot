@@ -17,13 +17,7 @@ from discord.ext import commands
 from pytube import Playlist, Search, YouTube
 from pytube.exceptions import LiveStreamError
 
-logger = logging.getLogger("discord")
-logger.setLevel(logging.INFO)
-handler = logging.FileHandler(filename="discord.log", encoding="utf-8", mode="w")
-handler.setFormatter(
-    logging.Formatter("%(asctime)s:%(levelname)s:%(name)s: %(message)s")
-)
-logger.addHandler(handler)
+logging.basicConfig(format='%(asctime)s - %(message)s', level=logging.INFO)
 
 DISCORD_API_KEY = os.environ.get("DISCORD_API_KEY")
 
@@ -245,7 +239,7 @@ async def common(message):
         await asyncio.sleep(delete_seconds)
         await message.message.delete()
     except Exception as e:
-        logger.warning(e)
+        logging.exception("Exception occurred")
 
 
 class CTF(commands.Cog):
@@ -301,7 +295,7 @@ class Miscellaneous(commands.Cog):
             )
             await ctx.reply(embed=embed, delete_after=delete_seconds)
         except Exception as e:
-            logger.warning(e)
+            logging.exception("Exception occurred")
 
     @commands.command("joke")
     async def joke(self, ctx):
@@ -320,7 +314,7 @@ class Miscellaneous(commands.Cog):
             embed.set_image(url=url)
             await ctx.reply(embed=embed, delete_after=delete_seconds)
         except Exception as e:
-            logger.warning(e)
+            logging.exception("Exception occurred")
 
     @commands.command("summary")
     async def summary(self, ctx, *, topic):
@@ -364,12 +358,12 @@ class Miscellaneous(commands.Cog):
                 embed.set_author(name=ctx.message.author)
                 await ctx.reply(embed=embed, delete_after=delete_seconds)
             except Exception as e:
-                logger.warning(e)
+                logging.exception("Exception occurred")
                 await ctx.reply(
                     "Sorry something went wrong :(", delete_after=delete_seconds
                 )
         except Exception as e:
-            logger.warning(e)
+            logging.exception("Exception occurred")
             await ctx.reply(
                 "Sorry something went wrong :(", delete_after=delete_seconds
             )
@@ -385,7 +379,7 @@ class Miscellaneous(commands.Cog):
         except UnicodeDecodeError:
             await ctx.reply("That isn't a valid hex", delete_after=delete_seconds)
         except Exception as e:
-            logger.warning(e)
+            logging.exception("Exception occurred")
             await ctx.reply(
                 "Sorry something went wrong :(", delete_after=delete_seconds
             )
@@ -403,7 +397,7 @@ class Miscellaneous(commands.Cog):
             out += "```"
             await ctx.reply(out, delete_after=delete_seconds)
         except Exception as e:
-            logger.warning(e)
+            logging.exception("Exception occurred")
             await ctx.reply(
                 "Sorry something went wrong :(", delete_after=delete_seconds
             )
@@ -417,7 +411,7 @@ class Miscellaneous(commands.Cog):
             rot13 = Rot13.encrypt(text)
             await ctx.reply(f"```{rot13}```", delete_after=delete_seconds)
         except Exception as e:
-            logger.warning(e)
+            logging.exception("Exception occurred")
             await ctx.reply(
                 "Sorry something went wrong :(", delete_after=delete_seconds
             )
@@ -431,7 +425,7 @@ class Miscellaneous(commands.Cog):
             rot47 = Rot47.encrypt(text)
             await ctx.reply(f"```{rot47}```", delete_after=delete_seconds)
         except Exception as e:
-            logger.warning(e)
+            logging.exception("Exception occurred")
             await ctx.reply(
                 "Sorry something went wrong :(", delete_after=delete_seconds
             )
@@ -445,7 +439,7 @@ class Miscellaneous(commands.Cog):
             hex_string = binascii.hexlify(text.encode()).decode()
             await ctx.reply(hex_string, delete_after=delete_seconds)
         except Exception as e:
-            logger.warning(e)
+            logging.exception("Exception occurred")
             await ctx.reply(
                 "Sorry something went wrong :(", delete_after=delete_seconds
             )
@@ -462,7 +456,7 @@ class Miscellaneous(commands.Cog):
                 base64_encoded = base64.b64encode(msg.encode()).decode()
                 await ctx.reply(f"```{base64_encoded}```", delete_after=delete_seconds)
             except Exception as e:
-                logger.warning(e)
+                logging.exception("Exception occurred")
                 await ctx.reply(
                     "Sorry something went wrong :(", delete_after=delete_seconds
                 )
@@ -471,7 +465,7 @@ class Miscellaneous(commands.Cog):
                 base64_decoded = base64.b64decode(msg).decode()
                 await ctx.reply(f"```{base64_decoded}```", delete_after=delete_seconds)
             except Exception as e:
-                logger.warning(e)
+                logging.exception("Exception occurred")
                 await ctx.reply(
                     "Sorry something went wrong :(", delete_after=delete_seconds
                 )
@@ -492,7 +486,7 @@ class Miscellaneous(commands.Cog):
                 base32_encoded = base64.b32encode(msg.encode()).decode()
                 await ctx.reply(f"```{base32_encoded}```", delete_after=delete_seconds)
             except Exception as e:
-                logger.warning(e)
+                logging.exception("Exception occurred")
                 await ctx.reply(
                     "Sorry something went wrong :(", delete_after=delete_seconds
                 )
@@ -501,7 +495,7 @@ class Miscellaneous(commands.Cog):
                 base32_decoded = base64.b32decode(msg).decode()
                 await ctx.reply(f"```{base32_decoded}```", delete_after=delete_seconds)
             except Exception as e:
-                logger.warning(e)
+                logging.exception("Exception occurred")
                 await ctx.reply(
                     "Sorry something went wrong :(", delete_after=delete_seconds
                 )
@@ -550,7 +544,7 @@ class Miscellaneous(commands.Cog):
                 try:
                     await msg.add_reaction(reaction)
                 except Exception as e:
-                    logger.warning(e)
+                    logging.exception("Exception occurred")
 
     @commands.command("url")
     async def url(self, ctx, method, *, msg):
@@ -564,7 +558,7 @@ class Miscellaneous(commands.Cog):
                 url_encoded = quote(msg)
                 await ctx.reply(f"```{url_encoded}```", delete_after=delete_seconds)
             except Exception as e:
-                logger.warning(e)
+                logging.exception("Exception occurred")
                 await ctx.reply(
                     "Sorry something went wrong :(", delete_after=delete_seconds
                 )
@@ -573,7 +567,7 @@ class Miscellaneous(commands.Cog):
                 url_decoded = unquote(msg)
                 await ctx.reply(f"```{url_decoded}```", delete_after=delete_seconds)
             except Exception as e:
-                logger.warning(e)
+                logging.exception("Exception occurred")
                 await ctx.reply(
                     "Sorry something went wrong :(", delete_after=delete_seconds
                 )
@@ -594,7 +588,7 @@ class Miscellaneous(commands.Cog):
                 binary_encoded = "".join(format(ord(i), "08b") for i in msg)
                 await ctx.reply(f"```{binary_encoded}```", delete_after=delete_seconds)
             except Exception as e:
-                logger.warning(e)
+                logging.exception("Exception occurred")
                 await ctx.reply(
                     "Sorry something went wrong :(", delete_after=delete_seconds
                 )
@@ -610,7 +604,7 @@ class Miscellaneous(commands.Cog):
                     delete_after=delete_seconds,
                 )
             except Exception as e:
-                logger.warning(e)
+                logging.exception("Exception occurred")
                 await ctx.reply(
                     "Sorry something went wrong :(", delete_after=delete_seconds
                 )
@@ -627,7 +621,7 @@ class Miscellaneous(commands.Cog):
         try:
             await ctx.reply(text[::-1], delete_after=delete_seconds)
         except Exception as e:
-            logger.warning(e)
+            logging.exception("Exception occurred")
             await ctx.reply(
                 "Sorry something went wrong :(", delete_after=delete_seconds
             )
@@ -640,7 +634,7 @@ class Miscellaneous(commands.Cog):
         try:
             await ctx.reply(len(text), delete_after=delete_seconds)
         except Exception as e:
-            logger.warning(e)
+            logging.exception("Exception occurred")
             await ctx.reply(
                 "Sorry something went wrong :(", delete_after=delete_seconds
             )
@@ -660,7 +654,7 @@ class Miscellaneous(commands.Cog):
 
             await ctx.reply(str(count), delete_after=delete_seconds)
         except Exception as e:
-            logger.warning(e)
+            logging.exception("Exception occurred")
             await ctx.reply(
                 "Sorry something went wrong :(", delete_after=delete_seconds
             )
@@ -671,7 +665,7 @@ class Miscellaneous(commands.Cog):
             response = chatbot(ctx.author.name, text)
             await ctx.reply(response, delete_after=delete_seconds)
         except Exception as e:
-            logger.warning(e)
+            logging.exception("Exception occurred")
             await ctx.reply(
                 "Sorry something went wrong :(", delete_after=delete_seconds
             )
@@ -779,7 +773,7 @@ class Music(commands.Cog):
 
             await ctx.send(embed=embed, delete_after=delete_seconds)
         except Exception as e:
-            logger.warning(e)
+            logging.exception("Exception occurred")
             await ctx.reply(
                 "Sorry something went wrong :(", delete_after=delete_seconds
             )
@@ -797,7 +791,7 @@ class Music(commands.Cog):
             except:
                 pass
         except Exception as e:
-            logger.warning(e)
+            logging.exception("Exception occurred")
             await ctx.reply("Sorry something wen wrong :(", delete_after=delete_seconds)
 
     @commands.command("pause")
@@ -815,7 +809,7 @@ class Music(commands.Cog):
                     "Currently no audio is playing.", delete_after=delete_seconds
                 )
         except Exception as e:
-            logger.warning(e)
+            logging.exception("Exception occurred")
             await ctx.reply("Sorry something wen wrong :(", delete_after=delete_seconds)
 
     @commands.command("resume")
@@ -831,7 +825,7 @@ class Music(commands.Cog):
             else:
                 await ctx.reply("The audio is not paused.", delete_after=delete_seconds)
         except Exception as e:
-            logger.warning(e)
+            logging.exception("Exception occurred")
             await ctx.reply("Sorry something wen wrong :(", delete_after=delete_seconds)
 
     @commands.command("stop")
@@ -844,7 +838,7 @@ class Music(commands.Cog):
             voice.stop()
             self.queue = []
         except Exception as e:
-            logger.warning(e)
+            logging.exception("Exception occurred")
             await ctx.reply("Sorry something wen wrong :(", delete_after=delete_seconds)
 
 
