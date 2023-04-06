@@ -1,28 +1,52 @@
+import asyncio
 import base64
 import binascii
 import datetime
+import html
+import logging
 import os
 import random
 import string
 from urllib.parse import parse_qs, quote, unquote, urlparse
 
 import discord
+import mysql.connector
 import requests
+import wikipedia
 from discord.ext import commands
 from pytube import Playlist, Search, YouTube
 from pytube.exceptions import LiveStreamError
+
+logger = logging.getLogger("discord")
+logger.setLevel(logging.INFO)
+handler = logging.FileHandler(filename="discord.log", encoding="utf-8", mode="w")
+handler.setFormatter(
+    logging.Formatter("%(asctime)s:%(levelname)s:%(name)s: %(message)s")
+)
+logger.addHandler(handler)
 
 DISCORD_API_KEY = os.environ.get("DISCORD_API_KEY")
 
 events_url = "https://ctftime.org/api/v1/events/"
 quote_url = "https://api.quotable.io/random"
-joke_url = "https://meme-api.herokuapp.com/gimme/"
+joke_url = "https://www.reddit.com/r/memes/.json"
 lofi_url = "https://lofi-api.herokuapp.com/v1/track"
 
-headers = {"User-Agent": "Mozilla/5.0"}
+headers = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/42.0.2311.135 Safari/537.36 Edge/12.246"
+}
 poll_emojis = ["1⃣", "2⃣", "3⃣", "4⃣", "5⃣", "6⃣", "7⃣", "8⃣", "9⃣"]
 
 delete_seconds = 300
+
+
+mydb = mysql.connector.connect(
+    host="cloud.mindsdb.com",
+    user=os.environ.get("MINDSDB_USER"),
+    password=os.environ.get("MINDSDB_PASSW"),
+    port=3306,
+)
+cursor = mydb.cursor()
 
 bot = commands.Bot(command_prefix="/", strip_after_prefix=True)
 
@@ -38,8 +62,13 @@ def get_random_quote():
 
 
 def get_random_joke():
-    res = requests.get(joke_url, params={"nsfw": False})
-    return res.json()
+    res = requests.get(joke_url, headers=headers)
+    joke = res.json()
+    joke = random.choice(joke["data"]["children"])["data"]
+    is_nsfw = joke.get("over_18")
+    if is_nsfw:
+        return get_random_joke()
+    return joke.get("url", ""), joke.get("title", "**Joke**"), joke.get("permalink", "")
 
 
 def get_lofi_music():
@@ -51,7 +80,7 @@ def get_lofi_music():
 def get_youtube_audio(url, index=0):
     parsed_url = urlparse(url)
     playlist = parse_qs(parsed_url.query).get("list")
-    
+
     if playlist:
         try:
             s = Playlist(f"https://www.youtube.com/playlist?list={playlist[-1]}")
@@ -67,7 +96,7 @@ def get_youtube_audio(url, index=0):
             s = Search(url).results[index]
             return s.watch_url
         except LiveStreamError:
-            return get_youtube_audio(url, index+1)
+            return get_youtube_audio(url, index + 1)
         except:
             if "youtube.com" not in url:
                 s = get_youtube_audio(f"https://www.youtube.com/watch?v={url}")
@@ -75,13 +104,27 @@ def get_youtube_audio(url, index=0):
                 return
 
 
+def get_wikipedia_summary(topic):
+    search = wikipedia.search(topic, results=1)
+    if not search:
+        return False
+    page = wikipedia.page(search[0], auto_suggest=False)
+    return page.title, page.summary, page.url
+
 
 def download_audio(url):
     if isinstance(url, YouTube):
         s = url
-        audios = s.streams.filter(mime_type="audio/mp4", only_audio=True).order_by("abr")
+        audios = s.streams.filter(mime_type="audio/mp4", only_audio=True).order_by(
+            "abr"
+        )
         song = audios[-1]
-        return {"title": s.title, "thumbnail": s.thumbnail_url, "artist": s.author, "url": song.url}
+        return {
+            "title": s.title,
+            "thumbnail": s.thumbnail_url,
+            "artist": s.author,
+            "url": song.url,
+        }
     try:
         s = YouTube(url)
     except:
@@ -95,7 +138,12 @@ def download_audio(url):
 
     audios = s.streams.filter(mime_type="audio/mp4", only_audio=True).order_by("abr")
     song = audios[-1]
-    return {"title": s.title, "thumbnail": s.thumbnail_url, "artist": s.author, "url": song.url}
+    return {
+        "title": s.title,
+        "thumbnail": s.thumbnail_url,
+        "artist": s.author,
+        "url": song.url,
+    }
 
 
 def unhex(*hex_str):
@@ -105,6 +153,20 @@ def unhex(*hex_str):
 
     encoded_string = bytes.fromhex(hex_str)
     return encoded_string.decode()
+
+
+def chatbot(username, prompt):
+    cursor.execute(
+        """SELECT response from mindsdb.snowlon_model
+WHERE 
+author_username = %s 
+AND text=%s;""",
+        (username, prompt),
+    )
+    out = ""
+    for response in cursor:
+        out = response[0]
+    return out
 
 
 class Caesar:
@@ -172,12 +234,26 @@ async def on_raw_reaction_add(payload):
         await reaction.remove(payload.member)
 
 
+@bot.event
+async def on_ready():
+    print(f"We have logged in as {bot.user}")
+
+
+@bot.after_invoke
+async def common(message):
+    try:
+        await asyncio.sleep(delete_seconds)
+        await message.message.delete()
+    except Exception as e:
+        logger.warning(e)
+
+
 class CTF(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
     @commands.command("upcoming-ctfs")
-    async def cmd_upcoming_ctfs(self, ctx, num=2):
+    async def upcoming_ctfs(self, ctx, num=2):
         """
         List upcoming CTFs on ctftime.org
         """
@@ -212,51 +288,113 @@ class Miscellaneous(commands.Cog):
         self.bot = bot
 
     @commands.command("quote")
-    async def cmd_quote(self, ctx):
+    async def quote(self, ctx):
         """
         Get random quote
         """
-        quote = get_random_quote()
-        content = quote.get("content")
-        author = quote.get("author")
-        embed = discord.Embed(
-            title=content, description=f"**{author}**", color=discord.Colour.green()
-        )
-        await ctx.reply(embed=embed, delete_after=delete_seconds)
-
+        try:
+            quote = get_random_quote()
+            content = quote.get("content")
+            author = quote.get("author")
+            embed = discord.Embed(
+                title=content, description=f"**{author}**", color=discord.Colour.green()
+            )
+            await ctx.reply(embed=embed, delete_after=delete_seconds)
+        except Exception as e:
+            logger.warning(e)
 
     @commands.command("joke")
-    async def cmd_joke(self, ctx):
+    async def joke(self, ctx):
         """
         Gets a random joke from reddit.
         """
-        joke = get_random_joke()
-        title = joke.get("title")
-        if title:
-            await ctx.reply(title, delete_after=delete_seconds)
-        await ctx.reply(joke.get("url"), delete_after=delete_seconds)
+        try:
+            url, title, link = get_random_joke()
+            embed = discord.Embed(
+                title=title,
+                color=discord.Colour.orange(),
+                timestamp=datetime.datetime.utcnow(),
+                description=f"Post: https://reddit.com{link}",
+            )
+            embed.set_author(name=ctx.message.author)
+            embed.set_image(url=url)
+            await ctx.reply(embed=embed, delete_after=delete_seconds)
+        except Exception as e:
+            logger.warning(e)
 
+    @commands.command("summary")
+    async def summary(self, ctx, *, topic):
+        """
+        Gets summary of a topic from wikipedia.
+        """
+        try:
+            data = get_wikipedia_summary(topic)
+            if not data:
+                await ctx.reply(
+                    "Sorry we can't find summary about that topic.",
+                    delete_after=delete_seconds,
+                )
+
+            title, summary, url = data
+            embed = discord.Embed(
+                title=title,
+                description=f"{summary.strip()}\nMore Info: {url}",
+                color=discord.Colour.teal(),
+                timestamp=datetime.datetime.utcnow(),
+            )
+            embed.set_author(name=ctx.message.author)
+            await ctx.reply(embed=embed, delete_after=delete_seconds)
+        except wikipedia.DisambiguationError as e:
+            try:
+                topic = e.options
+                data = get_wikipedia_summary(str(topic[0]))
+                if not data:
+                    await ctx.reply(
+                        "Sorry we can't find summary about that topic.",
+                        delete_after=delete_seconds,
+                    )
+
+                title, summary, url = data
+                embed = discord.Embed(
+                    title=title,
+                    description=f"{summary.strip()}\nMore Info: {url}",
+                    color=discord.Colour.teal(),
+                    timestamp=datetime.datetime.utcnow(),
+                )
+                embed.set_author(name=ctx.message.author)
+                await ctx.reply(embed=embed, delete_after=delete_seconds)
+            except Exception as e:
+                logger.warning(e)
+                await ctx.reply(
+                    "Sorry something went wrong :(", delete_after=delete_seconds
+                )
+        except Exception as e:
+            logger.warning(e)
+            await ctx.reply(
+                "Sorry something went wrong :(", delete_after=delete_seconds
+            )
 
     @commands.command("unhex")
-    async def cmd_unhex(self, ctx, *hex_str):
+    async def unhex(self, ctx, *, hex_str):
         """
         Unhex the hex passed as argument.
         """
         try:
-            ascii_val = unhex(*hex_str)
+            ascii_val = unhex(hex_str)
             await ctx.reply(ascii_val, delete_after=delete_seconds)
         except UnicodeDecodeError:
             await ctx.reply("That isn't a valid hex", delete_after=delete_seconds)
-        except:
-            await ctx.reply("Sorry something went wrong :(", delete_after=delete_seconds)
-
+        except Exception as e:
+            logger.warning(e)
+            await ctx.reply(
+                "Sorry something went wrong :(", delete_after=delete_seconds
+            )
 
     @commands.command("rot")
-    async def cmd_rot(self, ctx, *text):
+    async def rot(self, ctx, *, text):
         """
         /rot "a message" Returns all 25 possible rotations for a message.
         """
-        text = " ".join(text).replace("`", "")
         try:
             out = "```"
             for i in range(1, 26):
@@ -264,62 +402,67 @@ class Miscellaneous(commands.Cog):
                 out += rot + "\n"
             out += "```"
             await ctx.reply(out, delete_after=delete_seconds)
-        except:
-            await ctx.reply("Sorry something went wrong :(", delete_after=delete_seconds)
-
+        except Exception as e:
+            logger.warning(e)
+            await ctx.reply(
+                "Sorry something went wrong :(", delete_after=delete_seconds
+            )
 
     @commands.command("rot13")
-    async def cmd_rot13(self, ctx, *text):
+    async def rot13(self, ctx, *, text):
         """
         Decrypt and encrypt message in rot13.
         """
-        text = " ".join(text).replace("`", "")
         try:
             rot13 = Rot13.encrypt(text)
             await ctx.reply(f"```{rot13}```", delete_after=delete_seconds)
-        except:
-            await ctx.reply("Sorry something went wrong :(", delete_after=delete_seconds)
-
+        except Exception as e:
+            logger.warning(e)
+            await ctx.reply(
+                "Sorry something went wrong :(", delete_after=delete_seconds
+            )
 
     @commands.command("rot47")
-    async def cmd_rot47(self, ctx, *text):
+    async def rot47(self, ctx, *, text):
         """
         Decrypt and encrypt message in rot47.
         """
-        text = " ".join(text).replace("`", "")
         try:
             rot47 = Rot47.encrypt(text)
             await ctx.reply(f"```{rot47}```", delete_after=delete_seconds)
-        except:
-            await ctx.reply("Sorry something went wrong :(", delete_after=delete_seconds)
-
+        except Exception as e:
+            logger.warning(e)
+            await ctx.reply(
+                "Sorry something went wrong :(", delete_after=delete_seconds
+            )
 
     @commands.command("hex")
-    async def cmd_hex(self, ctx, *text):
+    async def hex(self, ctx, *, text):
         """
         Hex the strings passed as arguments.
         """
-        text = " ".join(text).replace("`", "")
         try:
             hex_string = binascii.hexlify(text.encode()).decode()
             await ctx.reply(hex_string, delete_after=delete_seconds)
-        except:
-            await ctx.reply("Sorry something went wrong :(", delete_after=delete_seconds)
-
+        except Exception as e:
+            logger.warning(e)
+            await ctx.reply(
+                "Sorry something went wrong :(", delete_after=delete_seconds
+            )
 
     @commands.command("base64", aliases=["b64"])
-    async def cmd_base64(self, ctx, method, *msg):
+    async def base64(self, ctx, method, *, msg):
         """
         Encode or decode in base64.
         Usage: base64 [e|d] message.
         For method use "e" for encoding and "d" for decoding
         """
-        msg = " ".join(msg).replace("`", "")
         if method[0] == "e":
             try:
                 base64_encoded = base64.b64encode(msg.encode()).decode()
                 await ctx.reply(f"```{base64_encoded}```", delete_after=delete_seconds)
-            except:
+            except Exception as e:
+                logger.warning(e)
                 await ctx.reply(
                     "Sorry something went wrong :(", delete_after=delete_seconds
                 )
@@ -327,27 +470,29 @@ class Miscellaneous(commands.Cog):
             try:
                 base64_decoded = base64.b64decode(msg).decode()
                 await ctx.reply(f"```{base64_decoded}```", delete_after=delete_seconds)
-            except:
+            except Exception as e:
+                logger.warning(e)
                 await ctx.reply(
                     "Sorry something went wrong :(", delete_after=delete_seconds
                 )
         else:
-            await ctx.reply(f"{method} is not a valid option", delete_after=delete_seconds)
-
+            await ctx.reply(
+                f"{method} is not a valid option", delete_after=delete_seconds
+            )
 
     @commands.command("base32", aliases=["b32"])
-    async def cmd_base32(self, ctx, method, *msg):
+    async def base32(self, ctx, method, *, msg):
         """
         Encode or decode in base32.
         Usage: base32 [e|d] message.
         For method use "e" for encoding and "d" for decoding
         """
-        msg = " ".join(msg).replace("`", "")
         if method[0] == "e":
             try:
                 base32_encoded = base64.b32encode(msg.encode()).decode()
                 await ctx.reply(f"```{base32_encoded}```", delete_after=delete_seconds)
-            except:
+            except Exception as e:
+                logger.warning(e)
                 await ctx.reply(
                     "Sorry something went wrong :(", delete_after=delete_seconds
                 )
@@ -355,32 +500,34 @@ class Miscellaneous(commands.Cog):
             try:
                 base32_decoded = base64.b32decode(msg).decode()
                 await ctx.reply(f"```{base32_decoded}```", delete_after=delete_seconds)
-            except:
+            except Exception as e:
+                logger.warning(e)
                 await ctx.reply(
                     "Sorry something went wrong :(", delete_after=delete_seconds
                 )
         else:
-            await ctx.reply(f"{method} is not a valid option", delete_after=delete_seconds)
-
+            await ctx.reply(
+                f"{method} is not a valid option", delete_after=delete_seconds
+            )
 
     @commands.command("cointoss")
-    async def cmd_cointoss(self, ctx):
+    async def cointoss(self, ctx):
         """
         Flips a coin for you.
         """
         coin_faces = ["heads", "tails"]
         await ctx.reply(random.choice(coin_faces), delete_after=delete_seconds)
 
-
     @commands.command("poll")
-    async def cmd_poll(self, ctx, title, *options):
+    async def poll(self, ctx, title, *, options):
         """
         Create a poll. (maximum 9 options)
         Usage: /poll "question" "1st option" "2nd option"...
         """
         if len(options) > 9:
             await ctx.reply(
-                "Sorry maximum 9 options are allowed in poll", delete_after=delete_seconds
+                "Sorry maximum 9 options are allowed in poll",
+                delete_after=delete_seconds,
             )
         else:
             reactions = []
@@ -402,23 +549,22 @@ class Miscellaneous(commands.Cog):
             for reaction in reactions:
                 try:
                     await msg.add_reaction(reaction)
-                except:
-                    pass
-
+                except Exception as e:
+                    logger.warning(e)
 
     @commands.command("url")
-    async def cmd_url(self, ctx, method, *msg):
+    async def url(self, ctx, method, *, msg):
         """
         Encode or decode in URL format.
         Usage: url [e|d] message.
         For method use "e" for encoding and "d" for decoding
         """
-        msg = " ".join(msg).replace("`", "")
         if method[0] == "e":
             try:
                 url_encoded = quote(msg)
                 await ctx.reply(f"```{url_encoded}```", delete_after=delete_seconds)
-            except:
+            except Exception as e:
+                logger.warning(e)
                 await ctx.reply(
                     "Sorry something went wrong :(", delete_after=delete_seconds
                 )
@@ -426,27 +572,29 @@ class Miscellaneous(commands.Cog):
             try:
                 url_decoded = unquote(msg)
                 await ctx.reply(f"```{url_decoded}```", delete_after=delete_seconds)
-            except:
+            except Exception as e:
+                logger.warning(e)
                 await ctx.reply(
                     "Sorry something went wrong :(", delete_after=delete_seconds
                 )
         else:
-            await ctx.reply(f"{method} is not a valid option", delete_after=delete_seconds)
-
+            await ctx.reply(
+                f"{method} is not a valid option", delete_after=delete_seconds
+            )
 
     @commands.command("binary")
-    async def cmd_binary(self, ctx, method, *msg):
+    async def binary(self, ctx, method, *, msg):
         """
         Encode or decode in binary.
         Usage: binary [e|d] message.
         For method use "e" for encoding and "d" for decoding
         """
-        msg = " ".join(msg).replace("`", "")
         if method[0] == "e":
             try:
                 binary_encoded = "".join(format(ord(i), "08b") for i in msg)
                 await ctx.reply(f"```{binary_encoded}```", delete_after=delete_seconds)
-            except:
+            except Exception as e:
+                logger.warning(e)
                 await ctx.reply(
                     "Sorry something went wrong :(", delete_after=delete_seconds
                 )
@@ -461,44 +609,47 @@ class Miscellaneous(commands.Cog):
                     "Please supply a valid binary value to decode.",
                     delete_after=delete_seconds,
                 )
-            except:
+            except Exception as e:
+                logger.warning(e)
                 await ctx.reply(
                     "Sorry something went wrong :(", delete_after=delete_seconds
                 )
         else:
-            await ctx.reply(f"{method} is not a valid option", delete_after=delete_seconds)
-
+            await ctx.reply(
+                f"{method} is not a valid option", delete_after=delete_seconds
+            )
 
     @commands.command("reverse", aliases=["rev"])
-    async def cmd_reverse(self, ctx, *text):
+    async def reverse(self, ctx, *, text):
         """
         Reverses the message.
         """
-        text = " ".join(text).replace("`", "")
         try:
             await ctx.reply(text[::-1], delete_after=delete_seconds)
-        except:
-            await ctx.reply("Sorry something went wrong :(", delete_after=delete_seconds)
-
+        except Exception as e:
+            logger.warning(e)
+            await ctx.reply(
+                "Sorry something went wrong :(", delete_after=delete_seconds
+            )
 
     @commands.command("length", aliases=["len"])
-    async def cmd_length(self, ctx, *text):
+    async def length(self, ctx, *, text):
         """
         Returns length of the message.
         """
-        text = " ".join(text).replace("`", "")
         try:
             await ctx.reply(len(text), delete_after=delete_seconds)
-        except:
-            await ctx.reply("Sorry something went wrong :(", delete_after=delete_seconds)
-
+        except Exception as e:
+            logger.warning(e)
+            await ctx.reply(
+                "Sorry something went wrong :(", delete_after=delete_seconds
+            )
 
     @commands.command("counteach")
-    async def cmd_counteach(self, ctx, *text):
+    async def counteach(self, ctx, *, text):
         """
         Counts the amount of characters in a text.
         """
-        text = " ".join(text).replace("`", "")
         try:
             count = {}
             for char in text:
@@ -508,9 +659,22 @@ class Miscellaneous(commands.Cog):
                     count[char] = 1
 
             await ctx.reply(str(count), delete_after=delete_seconds)
-        except:
-            await ctx.reply("Sorry something went wrong :(", delete_after=delete_seconds)
+        except Exception as e:
+            logger.warning(e)
+            await ctx.reply(
+                "Sorry something went wrong :(", delete_after=delete_seconds
+            )
 
+    @commands.command("chat")
+    async def chat(self, ctx, *, text):
+        try:
+            response = chatbot(ctx.author.name, text)
+            await ctx.reply(response, delete_after=delete_seconds)
+        except Exception as e:
+            logger.warning(e)
+            await ctx.reply(
+                "Sorry something went wrong :(", delete_after=delete_seconds
+            )
 
 
 class Music(commands.Cog):
@@ -520,7 +684,7 @@ class Music(commands.Cog):
         self.queue = []
         self.paused = False
 
-    async def check_queue(self,ctx):
+    async def check_queue(self, ctx):
         if self.paused:
             return
 
@@ -529,7 +693,7 @@ class Music(commands.Cog):
             voice_client.stop()
             self.queue.pop(0)
             if self.queue:
-                await ctx.invoke(self.bot.get_command('play'), url=self.queue[0][1])
+                await ctx.invoke(self.bot.get_command("play"), url=self.queue[0][1])
 
     def _play(self, url, *args):
         if url:
@@ -540,10 +704,10 @@ class Music(commands.Cog):
             if isinstance(url, Playlist):
                 for i in list(url.video_urls):
                     self.queue.append(("y", i))
-                out = f"Playlist \"{url.title}\""
+                out = f'Playlist "{url.title}"'
             elif isinstance(url, str):
                 self.queue.append(("y", url))
-                out = f"The Song \"{url}\""
+                out = f'The Song "{url}"'
 
             return out
 
@@ -565,14 +729,20 @@ class Music(commands.Cog):
                 await voice.connect()
                 voice_client = discord.utils.get(bot.voice_clients, guild=ctx.guild)
 
-            embed = discord.Embed(title="Now playing", color=discord.Color.green(), timestamp=datetime.datetime.utcnow())
+            embed = discord.Embed(
+                title="Now playing",
+                color=discord.Color.green(),
+                timestamp=datetime.datetime.utcnow(),
+            )
             embed.set_author(name=f"Requested by {ctx.author.display_name}")
             embed.set_footer(text="Playback Information")
 
             can_play = self._play(url, *args)
 
             if voice_client.is_playing():
-                await ctx.reply(f"{can_play} was added to the queue", delete_after=delete_seconds)
+                await ctx.reply(
+                    f"{can_play} was added to the queue", delete_after=delete_seconds
+                )
                 return
 
             if can_play:
@@ -593,34 +763,42 @@ class Music(commands.Cog):
                     if image:
                         embed.set_image(url=image)
 
-                voice_client.play(discord.FFmpegPCMAudio(song), after=lambda error: self.bot.loop.create_task(self.check_queue(ctx)))
+                voice_client.play(
+                    discord.FFmpegPCMAudio(song),
+                    after=lambda error: self.bot.loop.create_task(
+                        self.check_queue(ctx)
+                    ),
+                )
                 self.playing = True
             else:
-                await ctx.reply("Please input a valid youtube URL for playing audio", delete_after=delete_seconds)
+                await ctx.reply(
+                    "Please input a valid youtube URL for playing audio",
+                    delete_after=delete_seconds,
+                )
                 return
 
             await ctx.send(embed=embed, delete_after=delete_seconds)
         except Exception as e:
-            print(e)
-            raise e
-            await ctx.reply("Sorry something went wrong :(", delete_after=delete_seconds)
-
+            logger.warning(e)
+            await ctx.reply(
+                "Sorry something went wrong :(", delete_after=delete_seconds
+            )
 
     @commands.command("leave")
     async def leave(self, ctx):
         """
         Stops currently playing music and leave from the Music channel.
         """
-        self.queue = None
+        self.queue = []
         try:
             voice = discord.utils.get(bot.voice_clients, guild=ctx.guild)
             try:
                 await voice.disconnect()
             except:
                 pass
-        except:
+        except Exception as e:
+            logger.warning(e)
             await ctx.reply("Sorry something wen wrong :(", delete_after=delete_seconds)
-
 
     @commands.command("pause")
     async def pause(self, ctx):
@@ -633,10 +811,12 @@ class Music(commands.Cog):
                 voice.pause()
                 self.paused = True
             else:
-                await ctx.reply("Currently no audio is playing.", delete_after=delete_seconds)
-        except:
+                await ctx.reply(
+                    "Currently no audio is playing.", delete_after=delete_seconds
+                )
+        except Exception as e:
+            logger.warning(e)
             await ctx.reply("Sorry something wen wrong :(", delete_after=delete_seconds)
-
 
     @commands.command("resume")
     async def resume(self, ctx):
@@ -650,9 +830,9 @@ class Music(commands.Cog):
                 self.paused = False
             else:
                 await ctx.reply("The audio is not paused.", delete_after=delete_seconds)
-        except:
+        except Exception as e:
+            logger.warning(e)
             await ctx.reply("Sorry something wen wrong :(", delete_after=delete_seconds)
-
 
     @commands.command("stop")
     async def stop(self, ctx):
@@ -663,12 +843,94 @@ class Music(commands.Cog):
             voice = discord.utils.get(bot.voice_clients, guild=ctx.guild)
             voice.stop()
             self.queue = []
-        except:
+        except Exception as e:
+            logger.warning(e)
             await ctx.reply("Sorry something wen wrong :(", delete_after=delete_seconds)
+
+
+class Quiz(commands.Cog):
+    def __init__(self, bot):
+        self.bot = bot
+        self.quiz_api = "https://opentdb.com/api.php"
+        self.difficulty_colors = {
+            "easy": discord.Color.green(),
+            "medium": discord.Color.gold(),
+            "hard": discord.Color.red(),
+        }
+        self.have_a_quiz = False
+
+    def get_random_quiz(self):
+        data = requests.get(
+            self.quiz_api, params={"amount": 1, "type": "multiple"}
+        ).json()
+        result = data.get("results")[0]
+        category = result.get("category")
+        difficulty = result.get("difficulty")
+        question = html.unescape(result.get("question"))
+        answer = html.unescape(result.get("correct_answer"))
+        incorrect_answers = result.get("incorrect_answers")
+        options = [html.unescape(option) for option in [answer] + incorrect_answers]
+        random.shuffle(options)
+        answer_num = options.index(answer) + 1
+        qs = question + "\n"
+        for i, option in enumerate(options):
+            qs += f"{i+1}) {option}\n"
+        qs = qs.strip()
+        return category, difficulty, qs, answer_num, answer
+
+    @commands.command("quiz")
+    async def quiz(self, ctx):
+        """
+        Asks you a random question. You can answer with the number corresponding to the answer.
+        """
+        if self.have_a_quiz:
+            return await ctx.reply("You can't have 2 quizes at a time.")
+
+        message = ctx.message
+        category, difficulty, qs, ans_num, ans = self.get_random_quiz()
+        color = self.difficulty_colors.get(difficulty.lower(), discord.Color.blue())
+
+        embed = discord.Embed(
+            title=f"Quiz about {category}",
+            description=qs,
+            color=color,
+            timestamp=datetime.datetime.utcnow(),
+        )
+
+        await message.channel.send(embed=embed, delete_after=delete_seconds)
+        self.have_a_quiz = True
+
+        def check(m):
+            return m.author == message.author and m.content.isdigit()
+
+        try:
+            guess = await self.bot.wait_for(
+                "message", check=check, timeout=delete_seconds
+            )
+        except asyncio.TimeoutError:
+            return await ctx.reply(
+                "Sorry you took a long time to respond", delete_after=delete_seconds
+            )
+
+        if int(guess.content) == ans_num:
+            await ctx.send("You are right!", delete_after=delete_seconds)
+        else:
+            await ctx.send(
+                f'That\'s incorrect! The correct answer was "{ans}"',
+                delete_after=delete_seconds,
+            )
+        self.have_a_quiz = False
 
 
 bot.add_cog(CTF(bot))
 bot.add_cog(Miscellaneous(bot))
 bot.add_cog(Music(bot))
+bot.add_cog(Quiz(bot))
 
-bot.run(DISCORD_API_KEY)
+
+def main():
+    bot.run(DISCORD_API_KEY)
+
+
+if __name__ == "__main__":
+ 
