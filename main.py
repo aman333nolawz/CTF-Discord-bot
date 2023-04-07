@@ -42,7 +42,11 @@ mydb = mysql.connector.connect(
 )
 cursor = mydb.cursor()
 
-bot = commands.Bot(command_prefix="/", strip_after_prefix=True)
+intents = discord.Intents.default()
+intents.message_content = True
+bot = commands.Bot(command_prefix="/",
+                   strip_after_prefix=True,
+                   intents=intents)
 
 
 def get_upcoming_ctfs(limit=2):
