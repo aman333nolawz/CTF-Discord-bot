@@ -14,8 +14,8 @@ import mysql.connector
 import requests
 import wikipedia
 from discord.ext import commands
-from pytube import Playlist, Search, YouTube
-from pytube.exceptions import LiveStreamError
+from music import YTDLSource
+from yt_dlp import YoutubeDL
 
 logging.basicConfig(format='%(asctime)s - %(message)s', level=logging.INFO)
 
@@ -24,7 +24,6 @@ DISCORD_API_KEY = os.environ.get("DISCORD_API_KEY")
 events_url = "https://ctftime.org/api/v1/events/"
 quote_url = "https://api.quotable.io/random"
 joke_url = "https://www.reddit.com/r/memes/.json"
-lofi_url = "https://lofi-api.herokuapp.com/v1/track"
 
 headers = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/42.0.2311.135 Safari/537.36 Edge/12.246"
@@ -69,37 +68,22 @@ def get_random_joke():
     return joke.get("url", ""), joke.get("title", "**Joke**"), joke.get("permalink", "")
 
 
-def get_lofi_music():
-    r = requests.get(lofi_url)
-    items = r.json().get("items")
-    return random.choice(items)
-
-
-def get_youtube_audio(url, index=0):
-    parsed_url = urlparse(url)
-    playlist = parse_qs(parsed_url.query).get("list")
-
-    if playlist:
+def get_youtube_audio(arg):
+    YDL_OPTIONS = {'format': 'bestaudio', 'noplaylist':'True', 'quiet': True}
+    with YoutubeDL(YDL_OPTIONS) as ydl:
         try:
-            s = Playlist(f"https://www.youtube.com/playlist?list={playlist[-1]}")
-            return s
+            requests.get(arg) 
         except:
-            pass
+            audio = ydl.extract_info(f"ytsearch:{arg}", download=False)['entries'][0]
+        else:
+            audio = ydl.extract_info(arg, download=False)
 
-    try:
-        s = YouTube(url)
-        return s.watch_url
-    except:
-        try:
-            s = Search(url).results[index]
-            return s.watch_url
-        except LiveStreamError:
-            return get_youtube_audio(url, index + 1)
-        except:
-            if "youtube.com" not in url:
-                s = get_youtube_audio(f"https://www.youtube.com/watch?v={url}")
-            if not s:
-                return
+    return {
+        "title": audio.get("title", ""),
+        "thumbnail": audio.get("thumbnail", ""),
+        "artist": audio.get("channel", ""),
+        "url": f"https://youtube.com/watch?v={audio.get('id')}"
+    }
 
 
 def get_wikipedia_summary(topic):
@@ -108,40 +92,6 @@ def get_wikipedia_summary(topic):
         return False
     page = wikipedia.page(search[0], auto_suggest=False)
     return page.title, page.summary, page.url
-
-
-def download_audio(url):
-    if isinstance(url, YouTube):
-        s = url
-        audios = s.streams.filter(mime_type="audio/mp4", only_audio=True).order_by(
-            "abr"
-        )
-        song = audios[-1]
-        return {
-            "title": s.title,
-            "thumbnail": s.thumbnail_url,
-            "artist": s.author,
-            "url": song.url,
-        }
-    try:
-        s = YouTube(url)
-    except:
-        try:
-            s = Search(url).results[0]
-        except:
-            if "youtube.com" not in url:
-                s = download_audio(f"https://www.youtube.com/watch?v={url}")
-            if not s:
-                return
-
-    audios = s.streams.filter(mime_type="audio/mp4", only_audio=True).order_by("abr")
-    song = audios[-1]
-    return {
-        "title": s.title,
-        "thumbnail": s.thumbnail_url,
-        "artist": s.author,
-        "url": song.url,
-    }
 
 
 def unhex(*hex_str):
@@ -699,19 +649,13 @@ class Music(commands.Cog):
             url = url.strip() + " " + " ".join(args)
             url = url.strip()
             url = get_youtube_audio(url)
-            if isinstance(url, Playlist):
-                for i in list(url.video_urls):
-                    self.queue.append(("y", i))
-                out = f'Playlist "{url.title}"'
-            elif isinstance(url, str):
-                self.queue.append(("y", url))
-                out = f'The Song "{url}"'
+            self.queue.append(url)
+            out = f'The Song "{url.get("title")}"'
 
             return out
-
         else:
-            lofi = get_lofi_music()
-            self.queue.append(("l", lofi))
+            lofi = get_youtube_audio(url)
+            self.queue.append(lofi)
             return f'The song {lofi.get("title")}'
 
     @commands.command("play")
@@ -745,28 +689,15 @@ class Music(commands.Cog):
 
             if can_play:
                 song_info = self.queue[0]
-                if song_info[0] == "y":
-                    song_info = download_audio(song_info[1])
-                    song = song_info["url"]
-                    embed.add_field(name="Title", value=song_info["title"])
-                    embed.add_field(name="Artist", value=song_info["artist"])
-                    embed.set_image(url=song_info["thumbnail"])
-                elif song_info[0] == "l":
-                    song_info = song_info[1]
-                    song = song_info["path"]
-                    title = song_info.get("title")
-                    image = song_info.get("image").get("path")
-                    if title:
-                        embed.add_field(name="Title", value=title)
-                    if image:
-                        embed.set_image(url=image)
-
-                voice_client.play(
-                    discord.FFmpegPCMAudio(song),
-                    after=lambda error: self.bot.loop.create_task(
+                song = song_info["url"]
+                embed.add_field(name="Title", value=song_info["title"])
+                embed.add_field(name="Artist", value=song_info["artist"])
+                embed.set_image(url=song_info["thumbnail"])
+               
+                player = await YTDLSource.from_url(song_info["url"], loop=self.bot.loop, stream=True)
+                voice_client.play(player, after=lambda error: self.bot.loop.create_task(
                         self.check_queue(ctx)
-                    ),
-                )
+                    )) 
                 self.playing = True
             else:
                 await ctx.reply(
@@ -932,4 +863,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
